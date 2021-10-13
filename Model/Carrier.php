@@ -8,7 +8,6 @@ namespace Magento\Fedex\Model;
 
 use Magento\Framework\App\ObjectManager;
 use Magento\Framework\DataObject;
-use Magento\Framework\Exception\LocalizedException;
 use Magento\Framework\Module\Dir;
 use Magento\Framework\Serialize\Serializer\Json;
 use Magento\Framework\Webapi\Soap\ClientFactory;
@@ -22,7 +21,6 @@ use Magento\Shipping\Model\Rate\Result;
  *
  * @SuppressWarnings(PHPMD.ExcessiveClassComplexity)
  * @SuppressWarnings(PHPMD.CouplingBetweenObjects)
- * @SuppressWarnings(PHPMD.TooManyFields)
  */
 class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\Carrier\CarrierInterface
 {
@@ -150,16 +148,6 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
      * @var ClientFactory
      */
     private $soapClientFactory;
-
-    /**
-     * @var array
-     */
-    private $baseCurrencyRate;
-
-    /**
-     * @var DataObject
-     */
-    private $_rawTrackingRequest;
 
     /**
      * @param \Magento\Framework\App\Config\ScopeConfigInterface $scopeConfig
@@ -375,6 +363,7 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
 
         if ($request->getDestPostcode()) {
             $r->setDestPostal($request->getDestPostcode());
+        } else {
         }
 
         if ($request->getDestCity()) {
@@ -641,13 +630,12 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
     protected function _getRateAmountOriginBased($rate)
     {
         $amount = null;
-        $currencyCode = '';
         $rateTypeAmounts = [];
+
         if (is_object($rate)) {
             // The "RATED..." rates are expressed in the currency of the origin country
             foreach ($rate->RatedShipmentDetails as $ratedShipmentDetail) {
                 $netAmount = (string)$ratedShipmentDetail->ShipmentRateDetail->TotalNetCharge->Amount;
-                $currencyCode = (string)$ratedShipmentDetail->ShipmentRateDetail->TotalNetCharge->Currency;
                 $rateType = (string)$ratedShipmentDetail->ShipmentRateDetail->RateType;
                 $rateTypeAmounts[$rateType] = $netAmount;
             }
@@ -662,40 +650,9 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
             if ($amount === null) {
                 $amount = (string)$rate->RatedShipmentDetails[0]->ShipmentRateDetail->TotalNetCharge->Amount;
             }
-
-            $amount = (float)$amount * $this->getBaseCurrencyRate($currencyCode);
         }
 
         return $amount;
-    }
-
-    /**
-     * Returns base currency rate.
-     *
-     * @param string $currencyCode
-     * @return float
-     * @throws LocalizedException
-     */
-    private function getBaseCurrencyRate(string $currencyCode): float
-    {
-        if (!isset($this->baseCurrencyRate[$currencyCode])) {
-            $baseCurrencyCode = $this->_request->getBaseCurrency()->getCode();
-            $rate = $this->_currencyFactory->create()
-                ->load($currencyCode)
-                ->getAnyRate($baseCurrencyCode);
-            if ($rate === false) {
-                $errorMessage = __(
-                    'Can\'t convert a shipping cost from "%1-%2" for FedEx carrier.',
-                    $currencyCode,
-                    $baseCurrencyCode
-                );
-                $this->_logger->critical($errorMessage);
-                throw new LocalizedException($errorMessage);
-            }
-            $this->baseCurrencyRate[$currencyCode] = (float)$rate;
-        }
-
-        return $this->baseCurrencyRate[$currencyCode];
     }
 
     /**
@@ -770,8 +727,9 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
             $debugData = ['request' => $this->filterDebugData($request)];
             try {
                 $url = $this->getConfigData('gateway_url');
-
-                // phpcs:disable Magento2.Functions.DiscouragedFunction
+                if (!$url) {
+                    $url = $this->_defaultGatewayUrl;
+                }
                 $ch = curl_init();
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
                 curl_setopt($ch, CURLOPT_URL, $url);
@@ -780,7 +738,6 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
                 curl_setopt($ch, CURLOPT_POSTFIELDS, $request);
                 $responseBody = curl_exec($ch);
                 curl_close($ch);
-                // phpcs:enable
 
                 $debugData['result'] = $this->filterDebugData($responseBody);
                 $this->_setCachedQuotes($request, $responseBody);
@@ -1029,7 +986,6 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
      * Return FeDex currency ISO code by Magento Base Currency Code
      *
      * @return string 3-digit currency code
-     * @throws \Magento\Framework\Exception\NoSuchEntityException
      */
     public function getCurrencyCode()
     {
@@ -1052,7 +1008,7 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
         ];
         $currencyCode = $this->_storeManager->getStore()->getBaseCurrencyCode();
 
-        return $codes[$currencyCode] ?? $currencyCode;
+        return isset($codes[$currencyCode]) ? $codes[$currencyCode] : $currencyCode;
     }
 
     /**
@@ -1482,8 +1438,6 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
     }
 
     /**
-     * Return Tracking Number
-     *
      * @param array|object $trackingIds
      * @return string
      */
@@ -1498,10 +1452,10 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
     }
 
     /**
-     * For multi package shipments. Delete requested shipments if the current shipment request is failed
+     * For multi package shipments. Delete requested shipments if the current shipment
+     * request is failed
      *
      * @param array $data
-     *
      * @return bool
      */
     public function rollBack($data)
@@ -1521,7 +1475,6 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
      * Return container types of carrier
      *
      * @param \Magento\Framework\DataObject|null $params
-     *
      * @return array|bool
      * @SuppressWarnings(PHPMD.CyclomaticComplexity)
      */
@@ -1589,7 +1542,6 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
      * Return delivery confirmation types of carrier
      *
      * @param \Magento\Framework\DataObject|null $params
-     *
      * @return array
      * @SuppressWarnings(PHPMD.UnusedFormalParameter)
      */
@@ -1600,7 +1552,6 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
 
     /**
      * Recursive replace sensitive fields in debug data by the mask
-     *
      * @param string $data
      * @return string
      */
@@ -1618,7 +1569,6 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
 
     /**
      * Parse track details response from Fedex
-     *
      * @param \stdClass $trackInfo
      * @return array
      * @SuppressWarnings(PHPMD.CyclomaticComplexity)
@@ -1689,7 +1639,6 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
 
     /**
      * Parse delivery datetime from tracking details
-     *
      * @param \stdClass $trackInfo
      * @return \Datetime|null
      */
@@ -1706,7 +1655,8 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
     }
 
     /**
-     * Get delivery address details in string representation Return City, State, Country Code
+     * Get delivery address details in string representation
+     * Return City, State, Country Code
      *
      * @param \stdClass $address
      * @return \Magento\Framework\Phrase|string
@@ -1768,7 +1718,6 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
 
     /**
      * Append error message to rate result instance
-     *
      * @param string $trackingValue
      * @param string $errorMessage
      */
@@ -1810,7 +1759,8 @@ class Carrier extends AbstractCarrierOnline implements \Magento\Shipping\Model\C
     }
 
     /**
-     * Defines payment type by request. Two values are available: RECIPIENT or SENDER.
+     * Defines payment type by request.
+     * Two values are available: RECIPIENT or SENDER.
      *
      * @param DataObject $request
      * @return string
